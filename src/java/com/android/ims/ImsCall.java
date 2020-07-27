@@ -32,6 +32,7 @@ import android.telecom.ConferenceParticipant;
 import android.telecom.Connection;
 import android.telephony.Rlog;
 import java.util.Objects;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import android.telephony.CallQuality;
@@ -63,7 +64,7 @@ public class ImsCall implements ICall {
 
     // This flag is meant to be used as a debugging tool to quickly see all logs
     // regardless of the actual log level set on this component.
-    private static final boolean FORCE_DEBUG = false; /* STOPSHIP if true */
+    private static final boolean FORCE_DEBUG = true; /* STOPSHIP if true */
 
     // We will log messages guarded by these flags at the info level. If logging is required
     // to occur at (and only at) a particular log level, please use the logd, logv and loge
@@ -81,7 +82,11 @@ public class ImsCall implements ICall {
     // across different IMS implementations.
     private static final boolean CONF_DBG = true;
 
-    private List<ConferenceParticipant> mConferenceParticipants;
+    /// M: [ALPS02822042] use concurrent array list to avoid concurrent IO. @{
+    // private List<ConferenceParticipant> mConferenceParticipants;
+    private CopyOnWriteArrayList<ConferenceParticipant> mConferenceParticipants;
+    /// @}
+
     /**
      * Listener for events relating to an IMS call, such as when a call is being
      * received ("on ringing") or a call is outgoing ("on calling").
@@ -496,7 +501,7 @@ public class ImsCall implements ICall {
     }
 
     // List of update operation for IMS call control
-    private static final int UPDATE_NONE = 0;
+    protected static final int UPDATE_NONE = 0;
     private static final int UPDATE_HOLD = 1;
     private static final int UPDATE_HOLD_MERGE = 2;
     private static final int UPDATE_RESUME = 3;
@@ -505,35 +510,35 @@ public class ImsCall implements ICall {
     private static final int UPDATE_UNSPECIFIED = 6;
 
     // For synchronization of private variables
-    private Object mLockObj = new Object();
-    private Context mContext;
+    protected Object mLockObj = new Object();
+    protected Context mContext;
 
     // true if the call is established & in the conversation state
     private boolean mInCall = false;
     // true if the call is on hold
     // If it is triggered by the local, mute the call. Otherwise, play local hold tone
     // or network generated media.
-    private boolean mHold = false;
+    protected boolean mHold = false;
     // true if the call is on mute
     private boolean mMute = false;
     // It contains the exclusive call update request. Refer to UPDATE_*.
-    private int mUpdateRequest = UPDATE_NONE;
+    protected int mUpdateRequest = UPDATE_NONE;
 
-    private ImsCall.Listener mListener = null;
+    protected ImsCall.Listener mListener = null;
 
     // When merging two calls together, the "peer" call that will merge into this call.
-    private ImsCall mMergePeer = null;
+    protected ImsCall mMergePeer = null;
     // When merging two calls together, the "host" call we are merging into.
-    private ImsCall mMergeHost = null;
+    protected ImsCall mMergeHost = null;
 
     // True if Conference request was initiated by
     // Foreground Conference call else it will be false
     private boolean mMergeRequestedByConference = false;
     // Wrapper call session to interworking the IMS service (server).
-    private ImsCallSession mSession = null;
+    public ImsCallSession mSession = null;
     // Call profile of the current session.
     // It can be changed at anytime when the call is updated.
-    private ImsCallProfile mCallProfile = null;
+    protected ImsCallProfile mCallProfile = null;
     // Call profile to be updated after the application's action (accept/reject)
     // to the call update. After the application's action (accept/reject) is done,
     // it will be set to null.
@@ -545,7 +550,7 @@ public class ImsCall implements ICall {
 
     // The temporary ImsCallSession that could represent the merged call once
     // we receive notification that the merge was successful.
-    private ImsCallSession mTransientConferenceSession = null;
+    protected ImsCallSession mTransientConferenceSession = null;
     // While a merge is progressing, we bury any session termination requests
     // made on the original ImsCallSession until we have closure on the merge request
     // If the request ultimately fails, we need to act on the termination request
@@ -574,7 +579,7 @@ public class ImsCall implements ICall {
      * radio indicating that the call was terminated, we should override any burying of the
      * termination due to an ongoing conference merge.
      */
-    private boolean mTerminationRequestPending = false;
+    protected boolean mTerminationRequestPending = false;
 
     /**
      * For multi-party IMS calls (e.g. conferences), determines if this {@link ImsCall} is the one
@@ -587,7 +592,7 @@ public class ImsCall implements ICall {
      * When {@code false}, this {@link ImsCall} is a member of a conference started on another
      * device.
      */
-    private boolean mIsConferenceHost = false;
+    protected boolean mIsConferenceHost = false;
 
     /**
      * Tracks whether this {@link ImsCall} has been a video call at any point in its lifetime.
@@ -611,7 +616,7 @@ public class ImsCall implements ICall {
     /**
      * The current ImsCallSessionListenerProxy.
      */
-    private ImsCallSessionListenerProxy mImsCallSessionListenerProxy;
+    protected ImsCallSessionListenerProxy mImsCallSessionListenerProxy;
 
     /**
      * When calling {@link #terminate(int, int)}, an override for the termination reason which the
@@ -1417,7 +1422,7 @@ public class ImsCall implements ICall {
             if (mHold || (mContext.getResources().getBoolean(
                     com.android.internal.R.bool.skipHoldBeforeMerge))) {
 
-                if (mMergePeer != null && !mMergePeer.isMultiparty() && !isMultiparty()) {
+                if (mMergePeer != null && !mMergePeer.isConferenceHost() && !isConferenceHost()) {
                     // We only set UPDATE_MERGE when we are adding the first
                     // calls to the Conference.  If there is already a conference
                     // no special handling is needed. The existing conference
@@ -1464,7 +1469,7 @@ public class ImsCall implements ICall {
             this.setCallSessionMergePending(true);
             bgCall.setCallSessionMergePending(true);
 
-            if ((!isMultiparty() && !bgCall.isMultiparty()) || isMultiparty()) {
+            if ((!isConferenceHost() && !bgCall.isConferenceHost()) || isConferenceHost()) {
                 // If neither call is multiparty, the current call is the merge host and the bg call
                 // is the merge peer (ie we're starting a new conference).
                 // OR
@@ -1477,7 +1482,7 @@ public class ImsCall implements ICall {
             }
         }
 
-        if (isMultiparty()) {
+        if (isConferenceHost()) {
             mMergeRequestedByConference = true;
         } else {
             logi("merge : mMergeRequestedByConference not set");
@@ -1695,7 +1700,10 @@ public class ImsCall implements ICall {
             Parcel p = Parcel.obtain();
             mCallProfile.writeToParcel(p, 0);
             p.setDataPosition(0);
-            ImsCallProfile requestedProfile = new ImsCallProfile(p);
+            /// M: @{
+            //ImsCallProfile requestedProfile = new ImsCallProfile(p);
+            ImsCallProfile requestedProfile = new ImsCallProfile();
+            /// @}
             requestedProfile.mMediaProfile.setRttMode(rttOn
                     ? ImsStreamMediaProfile.RTT_MODE_FULL
                     : ImsStreamMediaProfile.RTT_MODE_DISABLED);
@@ -1739,7 +1747,7 @@ public class ImsCall implements ICall {
     /**
      * Creates an IMS call session listener.
      */
-    private ImsCallSession.Listener createCallSessionListener() {
+    protected ImsCallSession.Listener createCallSessionListener() {
         mImsCallSessionListenerProxy = new ImsCallSessionListenerProxy();
         return mImsCallSessionListenerProxy;
     }
@@ -1752,7 +1760,7 @@ public class ImsCall implements ICall {
         return mImsCallSessionListenerProxy;
     }
 
-    private ImsCall createNewCall(ImsCallSession session, ImsCallProfile profile) {
+    protected ImsCall createNewCall(ImsCallSession session, ImsCallProfile profile) {
         ImsCall call = new ImsCall(mContext, profile);
 
         try {
@@ -1846,7 +1854,10 @@ public class ImsCall implements ICall {
         }
 
         Iterator<Entry<String, Bundle>> iterator = participants.iterator();
-        mConferenceParticipants = new ArrayList<>(participants.size());
+        /// M: [ALPS02822042] use concurrent array list to avoid concurrent IO. @{
+        //mConferenceParticipants = new ArrayList<>(participants.size());
+        mConferenceParticipants = new CopyOnWriteArrayList<ConferenceParticipant>();
+        /// @}
         while (iterator.hasNext()) {
             Entry<String, Bundle> entry = iterator.next();
 
@@ -1923,7 +1934,7 @@ public class ImsCall implements ICall {
             }
 
             // If we are terminating the conference call, notify using conference listeners.
-            if (isMultiparty()) {
+            if (isConferenceHost()) {
                 notifyConferenceSessionTerminated(reasonInfo);
                 return;
             } else {
@@ -1959,9 +1970,12 @@ public class ImsCall implements ICall {
         return false;
     }
 
-    private void setTransientSessionAsPrimary(ImsCallSession transientSession) {
+    protected void setTransientSessionAsPrimary(ImsCallSession transientSession) {
         synchronized (ImsCall.this) {
             mSession.setListener(null);
+            /// M: ALPS02441894. Need to close old call session to avoid leak. @{
+            mSession.close();
+            /// @}
             mSession = transientSession;
             mSession.setListener(createCallSessionListener());
         }
@@ -1972,7 +1986,14 @@ public class ImsCall implements ICall {
             // If the peer is dead, let's not play a disconnect sound for it when we
             // unbury the termination callback.
             logi("markCallAsMerged");
-            setIsMerged(playDisconnectTone);
+            /// M: ALPS02706011 Fix google issue. @{
+            /// Merge call to conference call, unexpected "call ended" pops up.
+            /// ImsPhoneCallTracker will reset disconnected reason when target
+            /// call merge to conference, ims call's isMerged() should be set to true.
+            /// Ims call does not set the merged value to true when process merge complete.
+            // setIsMerged(playDisconnectTone);
+            setIsMerged(!playDisconnectTone);
+            /// @}
             mSessionEndDuringMerge = true;
             String reasonInfo;
             int reasonCode = ImsReasonInfo.CODE_UNSPECIFIED;
@@ -2026,7 +2047,7 @@ public class ImsCall implements ICall {
      * This function should only be called in the context of the merge host to simplify logic
      *
      */
-    private void processMergeComplete() {
+    public void processMergeComplete() {
         logi("processMergeComplete :: ");
 
         // The logic simplifies if we can assume that this function is only called on
@@ -2043,7 +2064,7 @@ public class ImsCall implements ICall {
         ImsCall finalPeerCall;
 
         synchronized(ImsCall.this) {
-            if (isMultiparty()) {
+            if (isConferenceHost()) {
                 setIsMerged(false);
                 // if case handles Case 4 explained in callSessionMergeComplete
                 // otherwise it is case 5
@@ -2259,7 +2280,7 @@ public class ImsCall implements ICall {
      *
      * @param reasonInfo The {@link ImsReasonInfo} why the merge failed.
      */
-    private void processMergeFailed(ImsReasonInfo reasonInfo) {
+    protected void processMergeFailed(ImsReasonInfo reasonInfo) {
         logi("processMergeFailed :: reason=" + reasonInfo);
 
         ImsCall.Listener listener;
@@ -2325,7 +2346,10 @@ public class ImsCall implements ICall {
 
             synchronized(ImsCall.this) {
                 listener = mListener;
-                mCallProfile.mMediaProfile.copyFrom(profile);
+                /// M: Telephony add-on @{
+                //mCallProfile.mMediaProfile.copyFrom(profile);
+                copyCallProfileIfNecessary(profile);
+                /// @}
             }
 
             if (listener != null) {
@@ -2412,6 +2436,10 @@ public class ImsCall implements ICall {
                 return;
             }
 
+            /// M: Telephony add-on @{
+            checkIfConferenceMerge(reasonInfo);
+            /// @}
+
             if (mOverrideReason != ImsReasonInfo.CODE_UNSPECIFIED) {
                 logi("callSessionTerminated :: overrideReasonInfo=" + mOverrideReason);
                 reasonInfo = new ImsReasonInfo(mOverrideReason, reasonInfo.getExtraCode(),
@@ -2436,7 +2464,12 @@ public class ImsCall implements ICall {
             synchronized(ImsCall.this) {
                 // If the session was held, it is no longer pending a merge -- this means it could
                 // not be merged into the conference and was held instead.
-                setCallSessionMergePending(false);
+                /// M: Telephony add-on @{
+                //setCallSessionMergePending(false);
+                if (shouldSkipResetMergePending() == false) {
+                    setCallSessionMergePending(false);
+                }
+                /// @}
 
                 setCallProfile(profile);
 
@@ -2448,6 +2481,9 @@ public class ImsCall implements ICall {
 
                 mUpdateRequest = UPDATE_NONE;
                 listener = mListener;
+                /// M: Telephony add-on @{
+                updateHoldStateIfNecessary(true);
+                /// @}
             }
 
             if (listener != null) {
@@ -2487,6 +2523,9 @@ public class ImsCall implements ICall {
 
                 mUpdateRequest = UPDATE_NONE;
                 listener = mListener;
+                /// M: Telephony add-on @{
+                updateHoldStateIfNecessary(false);
+                /// @}
             }
 
             if (listener != null) {
@@ -2549,7 +2588,12 @@ public class ImsCall implements ICall {
 
             // If this call was pending a merge, it is not anymore. This is the case when we
             // are merging in a new call into an existing conference.
-            setCallSessionMergePending(false);
+            /// M: Telephony add-on @{
+            //setCallSessionMergePending(false);
+            if (shouldSkipResetMergePending() == false) {
+                setCallSessionMergePending(false);
+            }
+            /// @}
 
             // TOOD: When we are merging a new call into an existing conference we are waiting
             // for 2 triggers to let us know that the conference has been established, the first
@@ -2644,7 +2688,7 @@ public class ImsCall implements ICall {
          * This method check if session exists as a session on the current
          * ImsCall or its counterpart if it is in the process of a conference
          */
-        private boolean doesCallSessionExistsInMerge(ImsCallSession cs) {
+        protected boolean doesCallSessionExistsInMerge(ImsCallSession cs) {
             String callId = cs.getCallId();
             return ((isMergeHost() && Objects.equals(mMergePeer.mSession.getCallId(), callId)) ||
                     (isMergePeer() && Objects.equals(mMergeHost.mSession.getCallId(), callId)) ||
@@ -2901,6 +2945,9 @@ public class ImsCall implements ICall {
             ImsCall.Listener listener;
 
             synchronized(ImsCall.this) {
+                /// M: Telephony add-on @{
+                resetConferenceMergingFlag();
+                /// @}
                 listener = mListener;
             }
 
@@ -2927,6 +2974,9 @@ public class ImsCall implements ICall {
             ImsCall.Listener listener;
 
             synchronized(ImsCall.this) {
+                /// M: Telephony add-on @{
+                resetConferenceMergingFlag();
+                /// @}
                 listener = mListener;
             }
 
@@ -3273,7 +3323,7 @@ public class ImsCall implements ICall {
      * @param updateRequest The update request.
      * @return The string representation.
      */
-    private String updateRequestToString(int updateRequest) {
+    protected String updateRequestToString(int updateRequest) {
         switch (updateRequest) {
             case UPDATE_NONE:
                 return "NONE";
@@ -3362,7 +3412,7 @@ public class ImsCall implements ICall {
      *
      * @return {@code true} if the call is the merge host.
      */
-    private boolean isMergeHost() {
+    protected boolean isMergeHost() {
         return mMergePeer != null && mMergeHost == null;
     }
 
@@ -3371,7 +3421,7 @@ public class ImsCall implements ICall {
      *
      * @return {@code true} if the call is the merge peer.
      */
-    private boolean isMergePeer() {
+    protected boolean isMergePeer() {
         return mMergePeer == null && mMergeHost != null;
     }
 
@@ -3625,7 +3675,7 @@ public class ImsCall implements ICall {
      * Log a string to the radio buffer at the info level.
      * @param s The message to log
      */
-    private void logi(String s) {
+    protected void logi(String s) {
         Log.i(TAG, appendImsCallInfoToString(s));
     }
 
@@ -3633,7 +3683,7 @@ public class ImsCall implements ICall {
      * Log a string to the radio buffer at the debug level.
      * @param s The message to log
      */
-    private void logd(String s) {
+    protected void logd(String s) {
         Log.d(TAG, appendImsCallInfoToString(s));
     }
 
@@ -3649,7 +3699,7 @@ public class ImsCall implements ICall {
      * Log a string to the radio buffer at the error level.
      * @param s The message to log
      */
-    private void loge(String s) {
+    protected void loge(String s) {
         Log.e(TAG, appendImsCallInfoToString(s));
     }
 
@@ -3658,7 +3708,26 @@ public class ImsCall implements ICall {
      * @param s The message to log
      * @param t The associated throwable
      */
-    private void loge(String s, Throwable t) {
+    protected void loge(String s, Throwable t) {
         Log.e(TAG, appendImsCallInfoToString(s), t);
     }
+
+    /// M: Telephony add-on @{
+    protected void copyCallProfileIfNecessary(ImsStreamMediaProfile profile) {
+        mCallProfile.mMediaProfile.copyFrom(profile);
+    }
+
+    protected void checkIfConferenceMerge(ImsReasonInfo reasonInfo) {
+    }
+
+    protected void updateHoldStateIfNecessary(boolean hold) {
+    }
+
+    protected boolean shouldSkipResetMergePending() {
+        return false;
+    }
+
+    protected void resetConferenceMergingFlag() {
+    }
+    /// @}
 }

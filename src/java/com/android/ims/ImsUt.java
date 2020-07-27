@@ -71,16 +71,16 @@ public class ImsUt implements ImsUtInterface {
     public static final String CATEGORY_CONF = "CONF";
 
     private static final String TAG = "ImsUt";
-    private static final boolean DBG = true;
+    protected static final boolean DBG = true;
 
     //These service class values are same as the one in CommandsInterface.java
     private static final int SERVICE_CLASS_NONE = 0;
     private static final int SERVICE_CLASS_VOICE = (1 << 0);
 
     // For synchronization of private variables
-    private Object mLockObj = new Object();
+    protected Object mLockObj = new Object();
     private final IImsUt miUt;
-    private HashMap<Integer, Message> mPendingCmds =
+    protected HashMap<Integer, Message> mPendingCmds =
             new HashMap<Integer, Message>();
     private Registrant mSsIndicationRegistrant;
 
@@ -593,7 +593,7 @@ public class ImsUt implements ImsUtInterface {
         }
     }
 
-    private void sendFailureReport(Message result, ImsReasonInfo error) {
+    protected void sendFailureReport(Message result, ImsReasonInfo error) {
         if (result == null || error == null) {
             return;
         }
@@ -612,7 +612,7 @@ public class ImsUt implements ImsUtInterface {
         result.sendToTarget();
     }
 
-    private void sendSuccessReport(Message result) {
+    protected void sendSuccessReport(Message result) {
         if (result == null) {
             return;
         }
@@ -621,7 +621,7 @@ public class ImsUt implements ImsUtInterface {
         result.sendToTarget();
     }
 
-    private void sendSuccessReport(Message result, Object ssInfo) {
+    protected void sendSuccessReport(Message result, Object ssInfo) {
         if (result == null) {
             return;
         }
@@ -630,15 +630,15 @@ public class ImsUt implements ImsUtInterface {
         result.sendToTarget();
     }
 
-    private void log(String s) {
+    protected void log(String s) {
         Rlog.d(TAG, s);
     }
 
-    private void loge(String s) {
+    protected void loge(String s) {
         Rlog.e(TAG, s);
     }
 
-    private void loge(String s, Throwable t) {
+    protected void loge(String s, Throwable t) {
         Rlog.e(TAG, s, t);
     }
 

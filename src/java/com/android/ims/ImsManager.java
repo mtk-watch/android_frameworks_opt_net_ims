@@ -63,6 +63,7 @@ import com.android.internal.telephony.ITelephony;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
+import java.lang.reflect.Constructor;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Set;
@@ -177,10 +178,12 @@ public class ImsManager {
      */
     public static final String EXTRA_IS_UNKNOWN_CALL = "android:isUnknown";
 
-    private static final int SYSTEM_PROPERTY_NOT_SET = -1;
+    /// M: MTK add-on @{
+    protected static final int SYSTEM_PROPERTY_NOT_SET = -1;
 
     // -1 indicates a subscriptionProperty value that is never set.
-    private static final int SUB_PROPERTY_NOT_INITIALIZED = -1;
+    protected static final int SUB_PROPERTY_NOT_INITIALIZED = -1;
+    /// @}
 
     private static final String TAG = "ImsManager";
     private static final boolean DBG = true;
@@ -237,6 +240,7 @@ public class ImsManager {
                                         status = mImsManager.getImsServiceState();
                                     }
                                 }
+                                log("notifyStateChanged, status: " + status);
                                 switch (status) {
                                     case ImsFeature.STATE_READY: {
                                         notifyReady();
@@ -269,8 +273,10 @@ public class ImsManager {
                     }
                 };
 
-        private final Context mContext;
-        private final int mPhoneId;
+        /// M: MTK add-on @{
+        protected final Context mContext;
+        protected final int mPhoneId;
+        /// @}
         private final Listener mListener;
         private final Executor mExecutor;
         private final Object mLock = new Object();
@@ -348,6 +354,7 @@ public class ImsManager {
                 }
 
                 // Exponential backoff during retry, limited to 32 seconds.
+                loge("Connector: Retrying getting ImsService...");
                 removeCallbacks(mGetServiceRunnable);
                 postDelayed(mGetServiceRunnable, mRetryTimeout.get());
             }
@@ -402,14 +409,18 @@ public class ImsManager {
     private static HashMap<Integer, ImsManager> sImsManagerInstances =
             new HashMap<Integer, ImsManager>();
 
-    private Context mContext;
+    protected Context mContext;
     private CarrierConfigManager mConfigManager;
-    private int mPhoneId;
+    protected int mPhoneId;
     private final boolean mConfigDynamicBind;
-    private @Nullable MmTelFeatureConnection mMmTelFeatureConnection = null;
+    /// M: MTK add-on @
+    protected @Nullable MmTelFeatureConnection mMmTelFeatureConnection = null;
+    /// @}
     private boolean mConfigUpdated = false;
 
-    private ImsConfigListener mImsConfigListener;
+    // MTK-START: Add on
+    protected ImsConfigListener mImsConfigListener;
+    // MTK-END
 
     //TODO: Move these caches into the MmTelFeature Connection and restrict their lifetimes to the
     // lifetime of the MmTelFeature.
@@ -448,7 +459,32 @@ public class ImsManager {
                 return m;
             }
 
-            ImsManager mgr = new ImsManager(context, phoneId);
+            ///M: MTK add-on dynamic loading @{
+            ImsManager mgr = null;
+            if (SystemProperties.get("ro.vendor.mtk_telephony_add_on_policy", "0").equals("0")) {
+                try {
+                    // Use the designated constructor with parameters
+                    Class[] cParam = new Class[2];
+                    cParam[0] = Context.class;
+                    cParam[1] = Integer.TYPE;
+
+                    Constructor clazzConstructfunc = getMtkImsManager().getDeclaredConstructor(
+                            cParam);
+                    log("constructor function = " + clazzConstructfunc);
+                    clazzConstructfunc.setAccessible(true);
+                    mgr = (ImsManager) clazzConstructfunc.newInstance(context, phoneId);
+                } catch (NoSuchMethodException nsme) {
+                    loge("MtkImsManager Constructor not found! Use AOSP instead!");
+                    mgr = new ImsManager(context, phoneId);
+                } catch (Exception  e) {
+                    loge("Exception at init MtkImsManager! Use AOSP for instead!");
+                    mgr = new ImsManager(context, phoneId);
+                }
+            } else {
+                log("New an AOSP's ImsManager instance");
+                mgr = new ImsManager(context, phoneId);
+            }
+            /// @}
             sImsManagerInstances.put(phoneId, mgr);
 
             return mgr;
@@ -544,7 +580,7 @@ public class ImsManager {
 
         if (prevSetting != (enabled ?
                 ProvisioningManager.PROVISIONING_VALUE_ENABLED :
-                ProvisioningManager.PROVISIONING_VALUE_DISABLED)) {
+                ProvisioningManager.PROVISIONING_VALUE_DISABLED) || shouldForceUpdated()) {
             if (isSubIdValid(subId)) {
                 SubscriptionManager.setSubscriptionProperty(subId,
                         SubscriptionManager.ENHANCED_4G_MODE_ENABLED,
@@ -561,6 +597,10 @@ public class ImsManager {
                 }
             }
         }
+    }
+
+    protected boolean shouldForceUpdated() {
+        return false;
     }
 
     /**
@@ -863,7 +903,8 @@ public class ImsManager {
      * @deprecated Does not support MSIM devices. Please use
      * {@link #isTurnOffImsAllowedByPlatform()} instead.
      */
-    private static boolean isTurnOffImsAllowedByPlatform(Context context) {
+    /* Modified for add-on */
+    protected static boolean isTurnOffImsAllowedByPlatform(Context context) {
         ImsManager mgr = ImsManager.getInstance(context,
                 SubscriptionManager.getDefaultVoicePhoneId());
         if (mgr != null) {
@@ -877,7 +918,8 @@ public class ImsManager {
      * Returns whether turning off ims is allowed by platform.
      * The platform property may override the carrier config.
      */
-    private boolean isTurnOffImsAllowedByPlatform() {
+    /* Modified for add-on */
+    protected boolean isTurnOffImsAllowedByPlatform() {
         // We first read the per slot value. If doesn't exist, we read the general value. If still
         // doesn't exist, we use the hardcoded default value.
         if (SystemProperties.getInt(PROPERTY_DBG_ALLOW_IMS_OFF_OVERRIDE +
@@ -1165,7 +1207,11 @@ public class ImsManager {
         }
     }
 
-    private int getSubId() {
+    /**
+     * M: Mtk add-on
+     * @return
+     */
+    protected int getSubId() {
         int[] subIds = SubscriptionManager.getSubId(mPhoneId);
         int subId = SubscriptionManager.INVALID_SUBSCRIPTION_ID;
         if (subIds != null && subIds.length >= 1) {
@@ -1174,7 +1220,7 @@ public class ImsManager {
         return subId;
     }
 
-    private void setWfcModeInternal(int wfcMode) {
+    protected void setWfcModeInternal(int wfcMode) {
         final int value = wfcMode;
         mExecutorFactory.executeRunnable(() -> {
             try {
@@ -1241,7 +1287,7 @@ public class ImsManager {
         setWfcRoamingSettingInternal(enabled);
     }
 
-    private void setWfcRoamingSettingInternal(boolean enabled) {
+    protected void setWfcRoamingSettingInternal(boolean enabled) {
         final int value = enabled
                 ? ProvisioningManager.PROVISIONING_VALUE_ENABLED
                 : ProvisioningManager.PROVISIONING_VALUE_DISABLED;
@@ -1313,7 +1359,8 @@ public class ImsManager {
      *
      * Format of EF IST is defined in 3GPP TS 31.103 (Section 4.2.7).
      */
-    private boolean isGbaValid() {
+    /* Modified for add-on */
+    protected boolean isGbaValid() {
         if (getBooleanCarrierConfig(
                 CarrierConfigManager.KEY_CARRIER_IMS_GBA_REQUIRED_BOOL)) {
             final TelephonyManager telephonyManager = new TelephonyManager(mContext, getSubId());
@@ -1471,7 +1518,9 @@ public class ImsManager {
         boolean available = isVolteEnabledByPlatform();
         boolean enabled = isEnhanced4gLteModeSettingEnabledByUser();
         boolean isNonTty = isNonTtyOrTtyOnVolteEnabled();
-        boolean isFeatureOn = available && enabled && isNonTty;
+        boolean isFeatureOn = available && enabled && isNonTty
+                              ///M: IMSI switch feature for OP18
+                              && shouldEnableImsForIR();
 
         log("updateVolteFeatureValue: available = " + available
                 + ", enabled = " + enabled
@@ -1491,7 +1540,7 @@ public class ImsManager {
     /**
      * Update video call over LTE config
      */
-    private void updateVideoCallFeatureValue(CapabilityChangeRequest request) {
+    protected void updateVideoCallFeatureValue(CapabilityChangeRequest request) {
         boolean available = isVtEnabledByPlatform();
         boolean enabled = isVtEnabledByUser();
         boolean isNonTty = isNonTtyOrTtyOnVolteEnabled();
@@ -1521,7 +1570,7 @@ public class ImsManager {
     /**
      * Update WFC config
      */
-    private void updateWfcFeatureAndProvisionedValues(CapabilityChangeRequest request) {
+    protected void updateWfcFeatureAndProvisionedValues(CapabilityChangeRequest request) {
         TelephonyManager tm = new TelephonyManager(mContext, getSubId());
         boolean isNetworkRoaming = tm.isNetworkRoaming();
         boolean available = isWfcEnabledByPlatform();
@@ -1590,6 +1639,11 @@ public class ImsManager {
                     MmTelFeature.MmTelCapabilities.CAPABILITY_TYPE_UT,
                     ImsRegistrationImplBase.REGISTRATION_TECH_LTE);
         }
+    }
+
+    ///M: For JIO IR feature
+    protected boolean shouldEnableImsForIR() {
+        return true;
     }
 
     /**
@@ -2120,6 +2174,9 @@ public class ImsManager {
         changeMmTelCapability(request);
     }
 
+    protected void changeMmTelCapabilityInternally(CapabilityChangeRequest r) {
+    }
+
     public void changeMmTelCapability(CapabilityChangeRequest r) throws ImsException {
         checkAndThrowExceptionIfServiceUnavailable();
         try {
@@ -2141,6 +2198,7 @@ public class ImsManager {
                         ProvisioningManager.PROVISIONING_VALUE_DISABLED, -1);
             }
         } catch (RemoteException e) {
+            changeMmTelCapabilityInternally(r);
             throw new ImsException("changeMmTelCapability(CCR)", e,
                     ImsReasonInfo.CODE_LOCAL_IMS_SERVICE_DOWN);
         }
@@ -2308,7 +2366,8 @@ public class ImsManager {
      * @param key config key defined in CarrierConfigManager
      * @return boolean value of corresponding key.
      */
-    private boolean getBooleanCarrierConfig(String key) {
+    /* Modified for add-on */
+    protected boolean getBooleanCarrierConfig(String key) {
         PersistableBundle b = null;
         if (mConfigManager != null) {
             // If an invalid subId is used, this bundle will contain default values.
@@ -2327,8 +2386,9 @@ public class ImsManager {
      *
      * @param key config key defined in CarrierConfigManager
      * @return integer value of corresponding key.
+     * M: MTK add-on
      */
-    private int getIntCarrierConfig(String key) {
+    protected int getIntCarrierConfig(String key) {
         PersistableBundle b = null;
         if (mConfigManager != null) {
             // If an invalid subId is used, this bundle will contain default values.
@@ -2348,7 +2408,7 @@ public class ImsManager {
      * @param incomingCallExtras the incoming call broadcast intent
      * @return the call ID or null if the intent does not contain it
      */
-    private static String getCallId(Bundle incomingCallExtras) {
+    protected static String getCallId(Bundle incomingCallExtras) {
         if (incomingCallExtras == null) {
             return null;
         }
@@ -2381,8 +2441,10 @@ public class ImsManager {
      * ImsService:
      * 1) com.android.ims.ImsService implementation in ServiceManager (deprecated).
      * 2) android.telephony.ims.ImsService implementation through ImsResolver.
+     * M: MTK add-on
      */
-    private void createImsService() {
+    protected void createImsService() {
+        Rlog.i(TAG, "Creating ImsService");
         mMmTelFeatureConnection = MmTelFeatureConnection.create(mContext, mPhoneId);
 
         // Forwarding interface to tell mStatusCallbacks that the Proxy is unavailable.
@@ -2406,7 +2468,7 @@ public class ImsManager {
      *
      * @param profile a call profile to make the call
      */
-    private ImsCallSession createCallSession(ImsCallProfile profile) throws ImsException {
+    protected ImsCallSession createCallSession(ImsCallProfile profile) throws ImsException {
         try {
             // Throws an exception if the ImsService Feature is not ready to accept commands.
             return new ImsCallSession(mMmTelFeatureConnection.createCallSession(profile));
@@ -2432,8 +2494,9 @@ public class ImsManager {
 
     /**
      * Used for turning on IMS.if its off already
+     * M: MTK add-on
      */
-    private void turnOnIms() throws ImsException {
+    protected void turnOnIms() throws ImsException {
         TelephonyManager tm = (TelephonyManager)
                 mContext.getSystemService(Context.TELEPHONY_SERVICE);
         tm.enableIms(mPhoneId);
@@ -2445,7 +2508,10 @@ public class ImsManager {
                 || !isWfcEnabledByUser());
     }
 
-    private void setLteFeatureValues(boolean turnOn) {
+    /**
+     * M: MTK add-on
+     */
+    protected void setLteFeatureValues(boolean turnOn) {
         log("setLteFeatureValues: " + turnOn);
         CapabilityChangeRequest request = new CapabilityChangeRequest();
         if (turnOn) {
@@ -2480,7 +2546,10 @@ public class ImsManager {
         }
     }
 
-    private void setAdvanced4GMode(boolean turnOn) throws ImsException {
+    /**
+     * M: MTK add-on
+     */
+    protected void setAdvanced4GMode(boolean turnOn) throws ImsException {
         checkAndThrowExceptionIfServiceUnavailable();
 
         // if turnOn: first set feature values then call turnOnIms()
@@ -2502,8 +2571,9 @@ public class ImsManager {
     /**
      * Used for turning off IMS completely in order to make the device CSFB'ed.
      * Once turned off, all calls will be over CS.
+     * M: MTK add-on
      */
-    private void turnOffIms() throws ImsException {
+    protected void turnOffIms() throws ImsException {
         TelephonyManager tm = (TelephonyManager)
                 mContext.getSystemService(Context.TELEPHONY_SERVICE);
         tm.disableIms(mPhoneId);
@@ -2729,7 +2799,7 @@ public class ImsManager {
                 provisionStatus);
     }
 
-    private boolean isDataEnabled() {
+    protected boolean isDataEnabled() {
         return new TelephonyManager(mContext, getSubId()).isDataCapable();
     }
 
@@ -2748,7 +2818,12 @@ public class ImsManager {
                 ImsConfig.ConfigConstants.LVC_SETTING_ENABLED);
     }
 
-    private static String booleanToPropertyString(boolean bool) {
+    /**
+     * M: MTK add-on
+     * @param bool
+     * @return
+     */
+    protected static String booleanToPropertyString(boolean bool) {
         return bool ? "1" : "0";
     }
 
@@ -2790,8 +2865,21 @@ public class ImsManager {
      * @param subId The sub id to check.
      * @return {@code true} if valid, {@code false} otherwise.
      */
-    private boolean isSubIdValid(int subId) {
+    protected boolean isSubIdValid(int subId) {
         return SubscriptionManager.isValidSubscriptionId(subId) &&
                 subId != SubscriptionManager.DEFAULT_SUBSCRIPTION_ID;
     }
+
+    /// M: Revise for telephony add-on @{
+    private static Class<?> getMtkImsManager() {
+        try {
+                String className = "com.mediatek.ims.internal.MtkImsManager";
+                Class<?> mtkImsManagerClass = Class.forName(className);
+                return mtkImsManagerClass;
+        } catch (Exception e) {
+            loge("MtkImsManager not found!");
+        }
+        return null;
+    }
+    /// @}
 }
